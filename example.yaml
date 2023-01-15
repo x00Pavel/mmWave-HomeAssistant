@@ -2,21 +2,24 @@ esphome:
   name: human-detector
   includes:
     - mmWaveRadar.h
-
+  # libraries:
+  #   - "Seeed Arduino 24GHz Radar Sensor@^1.0.1"
+    
 esp8266:
   board: d1_mini
 
 # Enable logging
 logger:
   baud_rate: 0
-
+  hardware_uart: UART0_SWAP
+  
 # Enable Home Assistant API
 api:
   encryption:
-    key: "secret"
+    key: "4bn4fHRXsNCTWVHaWmw2vhsTEk5I8/HxEIv/ceMc+0s="
 
 ota:
-  password: "secret"
+  password: "aa74dab5a90d51d39837cccd4be2112e"
 
 wifi:
   ssid: !secret wifi_ssid
@@ -40,6 +43,7 @@ uart:
   #     bytes: 1
 
 
+
 custom_component:
   - lambda: |-
       return {new HumanPresenceRadar(id(uart1))};
@@ -48,6 +52,15 @@ custom_component:
 
 
 binary_sensor:
+  - platform: gpio
+    pin: D1
+    name: "Human presense PIN"
+    device_class: PRESENCE
+
+  - platform: gpio
+    pin: D2
+    name: "Human active PIN"
+
   - platform: custom
     lambda: |-
       auto uart_component = static_cast<HumanPresenceRadar *>(mmWave);
@@ -63,6 +76,7 @@ sensor:
     sensors:
       name: "Body movement description"
       unit_of_measurement: "%"
+      accuracy_decimals: 0
   
 text_sensor:
   - platform: custom
@@ -77,3 +91,24 @@ text_sensor:
       return {uart_component->approching_away_sensor};
     text_sensors:
       name: "Approaching away state"
+  - platform: custom
+    lambda: |-
+      auto uart_component = static_cast<HumanPresenceRadar *>(mmWave);
+      return {uart_component->device_id, uart_component->sw_version, uart_component->hw_version, uart_component->protocol_version, uart_component->scene_settings};
+    text_sensors:
+      - name: "Device ID"
+      - name: "Software version"
+      - name: "Hardware version"
+      - name: "Protocol version"
+      - name: "Scene settings"
+
+
+button:
+  - platform: template
+    name: "Reboot radar"
+    on_press:
+      lambda: 'static_cast<HumanPresenceRadar *>(mmWave)->reboot();'
+  - platform: template
+    name: "Refresh radar info"
+    on_press:
+      lambda: 'static_cast<HumanPresenceRadar *>(mmWave)->get_radar_info();'

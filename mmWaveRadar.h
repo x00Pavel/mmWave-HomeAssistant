@@ -1,4 +1,6 @@
 #include "esphome.h"
+// #include <string>
+
 #define MESSAGE_HEAD 0x55
 #define LOGGER "mmWave"
 
@@ -10,9 +12,12 @@
 
 // Function address 1
 #define REPORT_RADAR_INFO 0x03
+#define REPORT_MODULE_INFO 0x01
+#define REPORT_SYS_INFO 0x04
 #define OTHER_INFO 0x05
 #define REPORT_RADAR_ID 0x01
 #define RADAR_SYS_INFO 0x04
+#define MARKING_SEARCH 0x01
 
 // Function address 2
 #define ENV_STATUS 0x05
@@ -24,16 +29,28 @@
 #define HW_VERSION 0x03
 #define PROTOCOL_VERSION 0x04
 #define SCENE 0x10
+#define ABNORMAL_RESET 0x02
+#define SCENE_SETTINGS 0x10
+#define TRASHOLD_GEAR 0x0c
 
 // Values environment status
 #define NONE 0xff
 #define STATIONAR 0x00
 #define MOVING 0x01
 
-// Values approachin away
+// Values approaching away
 #define NO_MOVEMENT 0x01
 #define CLOSE 0x02
 #define MOVING_AWAY 0x03
+
+// Value scene settings
+#define SCENE_DEFAULT 0x00
+#define SCENE_AREA_DETECTION_TOP_LOADING 0x01
+#define SCENE_BATHROOM_TOP_MOUNTED 0x02
+#define SCENE_BEADROOM_TOP_LOADING 0x03
+#define SCENE_LIVING_ROOM_TOP_MOUNTED 0x04
+#define SCENE_OFFICE_TOP_LOADING 0x05
+#define SCENE_HOTEL_TOP_LOADING 0x06
 
 #define IGNORE 0x99
 
@@ -42,10 +59,6 @@ typedef union {
   uint8_t buff[4];
 } byte_2_float;
 
-typedef struct {
-  uint8_t crc_lo;
-  uint8_t crc_hi;
-} crc_t;
 
 const unsigned char cuc_CRCHi[256]= {
   0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41,
@@ -97,7 +110,7 @@ const unsigned char  cuc_CRCLo[256]= {
   0x41, 0x81, 0x80, 0x40
 };
 
-crc_t us_CalculateCrc16(unsigned char *lpuc_Frame, size_t lus_Len){
+unsigned short int us_CalculateCrc16(unsigned char *lpuc_Frame, size_t lus_Len){
   unsigned char luc_CRCHi = 0xFF;
   unsigned char luc_CRCLo = 0xFF;
   int li_Index=0;
@@ -106,7 +119,7 @@ crc_t us_CalculateCrc16(unsigned char *lpuc_Frame, size_t lus_Len){
     luc_CRCLo = (unsigned char)( luc_CRCHi ^ cuc_CRCHi[li_Index]);
     luc_CRCHi = cuc_CRCLo[li_Index];
   }
-  return {luc_CRCLo, luc_CRCHi};
+  return (unsigned short int )(luc_CRCLo << 8 | luc_CRCHi);
 }
 
 
@@ -118,7 +131,12 @@ class HumanPresenceRadar : public Component, public UARTDevice {
   Sensor *body_movement = new Sensor();
   TextSensor *heart_beat_sensor = new TextSensor();
   TextSensor *approching_away_sensor = new TextSensor();
-  uint8_t buffer[14];
+  TextSensor *device_id = new TextSensor();
+  TextSensor *sw_version = new TextSensor();
+  TextSensor *hw_version = new TextSensor();
+  TextSensor *protocol_version = new TextSensor();
+  TextSensor *scene_settings = new TextSensor();
+  uint8_t buffer[64];
 
   float get_setup_priority() const override {
     return esphome::setup_priority::AFTER_WIFI;
@@ -128,9 +146,14 @@ class HumanPresenceRadar : public Component, public UARTDevice {
     // set_update_interval(500);
   }
 
+  String bytes_2_string(uint8_t *buff){
+    return reinterpret_cast<char*>(buff);
+  }
+  
   void send_command(uint8_t *buff, size_t data_size){
     size_t total_size = 8+data_size; // 8 bytes are necessary
-    uint8_t *cmd_buff = new uint8_t[total_size];
+    uint8_t cmd_buff[total_size];
+
     if(cmd_buff == nullptr) {
       ESP_LOGE(LOGGER, "Can't allocate memory for sending the command");
       return;
@@ -139,16 +162,14 @@ class HumanPresenceRadar : public Component, public UARTDevice {
     cmd_buff[0] = 0x55;
     cmd_buff[1] = 7 + data_size;
     cmd_buff[2] = 0;
-    for (size_t i = 0; i < 3 + data_size; i++){
+    for (size_t i = 0; i < data_size; i++){
       cmd_buff[3+i] = buff[i];
     }
-    crc_t crc = us_CalculateCrc16(buff, 3 + data_size);
-    cmd_buff[total_size - 2] = crc.crc_lo;
-    cmd_buff[total_size - 1] = crc.crc_hi;
-    
+    unsigned short int crc = us_CalculateCrc16(cmd_buff, 3 + data_size);
+    cmd_buff[total_size - 1] = (crc & 0xff00) >> 8;
+    cmd_buff[total_size] = crc & 0xff;
+    ESP_LOGI(LOGGER, "Sending data to the radar: %s", bytes_2_string(cmd_buff));
     write_array(cmd_buff, total_size);
-
-    delete[] cmd_buff;
   }
 
   void heart_beat(uint8_t *buffer){
@@ -173,6 +194,9 @@ class HumanPresenceRadar : public Component, public UARTDevice {
     switch (buffer[3]){
       case HEART_BEAT:
         heart_beat(buffer);
+        break;
+      case ABNORMAL_RESET:
+        ESP_LOGE(LOGGER, "Abnormal reset of the radar: 0x%02x", buffer[4]);
         break;
       default:
         ESP_LOGD(LOGGER, "Unrecognize option of other radar information: 0x%02x", buffer[3]);
@@ -229,6 +253,8 @@ class HumanPresenceRadar : public Component, public UARTDevice {
 
   void proactive_report(uint8_t *buffer){
     switch (buffer[2]){ //. Function address 1
+          case REPORT_MODULE_INFO:
+            process_module_info(buffer);
           case REPORT_RADAR_INFO: 
             report_radar_info(buffer);
             break;
@@ -240,9 +266,96 @@ class HumanPresenceRadar : public Component, public UARTDevice {
             break;
         }
   }
-  
+  String extract_buff_part(uint8_t *buff, uint8_t start, uint8_t end){
+    size_t size = end - start;
+    uint8_t bytes[size];
+    for (size_t i = 0; i < size; i++){
+      bytes[i] = buff[start + i];
+    }
+    return bytes_2_string(bytes);
+  }
+
+  void process_module_info(uint8_t *buff){
+    String value;
+    switch (buff[3]) {
+      case DEVICE_ID:
+        value = extract_buff_part(buff, 4, 16);
+        ESP_LOGD(LOGGER, "Device ID: %s", value);
+        device_id->publish_state(value.c_str());
+        break;
+      case SW_VERSION:
+        value = extract_buff_part(buff, 4, 14);
+        ESP_LOGI(LOGGER, "Software version: %s", value);
+        sw_version->publish_state(value.c_str());
+        break;
+      case HW_VERSION:
+        value = extract_buff_part(buff, 4, 12);
+        ESP_LOGI(LOGGER, "Hardare version: %s", value);
+        hw_version->publish_state(value.c_str());
+        break;
+      case PROTOCOL_VERSION:
+        value = extract_buff_part(buff, 4, 12);
+        ESP_LOGI(LOGGER, "Protocol version: %s", value);
+        protocol_version->publish_state(value.c_str());
+        break;
+      default:
+        ESP_LOGE(LOGGER, "Unknow second function code for module information: 0x%02x", buff[3]);
+        break;
+    }
+  }
+
+  void process_scene_settings(uint8_t scene){
+    const char* state = "Unknown scene";
+    switch (scene){
+      case SCENE_DEFAULT:
+        state = "Default scene";
+        break;
+      case SCENE_AREA_DETECTION_TOP_LOADING:
+        state = "Area detection top loading";
+        break;
+      case SCENE_BATHROOM_TOP_MOUNTED:
+        state = "Bathroom top mounted";
+        break;
+      case SCENE_BEADROOM_TOP_LOADING:
+        state = "Beadroom top loading";
+        break;
+      case SCENE_HOTEL_TOP_LOADING:
+        state = "Hotel top loading";
+        break;
+      case SCENE_LIVING_ROOM_TOP_MOUNTED:
+        state = "Living room top mounted";
+        break;
+      case SCENE_OFFICE_TOP_LOADING:
+        state = "Office top loading";
+        break;
+      default:
+        ESP_LOGE(LOGGER, "Unknow scene: 0x%02x", scene);
+        break;
+    }
+    scene_settings->publish_state(state);
+    ESP_LOGD(LOGGER, "Scene settings: %s", state);
+  }
+
+  void process_sys_info(uint8_t *buff){
+    ESP_LOGD(LOGGER, "Reporting system information");
+    switch (buffer[3]){
+      case TRASHOLD_GEAR:
+        ESP_LOGD(LOGGER, "Current trashold gear: %d", buff[4]);
+        break;
+      case SCENE_SETTINGS:
+        process_scene_settings(buff[4]);
+        break;
+      default:
+        ESP_LOGE(LOGGER, "Unknow code for system informatio: 0x%02x", buff[3]);
+        break;
+    } 
+  }
+
   void passive_report(uint8_t *buffer){
     switch (buffer[2]){
+      case REPORT_MODULE_INFO:
+        process_module_info(buffer);
+        break;
       case REPORT_RADAR_INFO:
         switch (buffer[3]){ // Function address 2
           case ENV_STATUS:
@@ -256,22 +369,12 @@ class HumanPresenceRadar : public Component, public UARTDevice {
             ESP_LOGD(LOGGER, "Unknow function address 2: 0x%02x", buffer[3]);
             break;
         }
-      case REPORT_RADAR_ID:
-        switch (buffer[3]){
-          case DEVICE_ID:
-            uint8_t id[12];
-            for (size_t i = 0; i < 12; i++){
-              id[i] = buffer[4+i];
-            }
-            ESP_LOGD(LOGGER, "Received radar ID: %s", id);
-            // radar_id->publish_state(id);
-            break;
-          default:
-            ESP_LOGD(LOGGER, "Unknow code for radar ID: 0x%02x", buffer[3]);
-            break;
-        }
+        break;
+      case REPORT_SYS_INFO:
+        process_sys_info(buffer);
+        break;
       default:
-        ESP_LOGD(LOGGER, "Unknow function code for passibe report: 0x%02x", buffer[2]);
+        ESP_LOGE(LOGGER, "Unknow function code for passive report: 0x%02x", buffer[2]);
         break;
     }
   }
@@ -295,6 +398,13 @@ class HumanPresenceRadar : public Component, public UARTDevice {
   void reboot(){
     uint8_t cmd[3] = {0x02, 0x05, 0x04};
     send_command(cmd, 3);
+  }
+
+  void get_radar_info(){
+    for (uint8_t cmd: {DEVICE_ID, SW_VERSION, HW_VERSION, PROTOCOL_VERSION}){
+      uint8_t cmd_list[3] = {READ_CMD, MARKING_SEARCH, cmd};
+      send_command(cmd_list, 3);
+    }
   }
 
   // =================== MAIN LOOP ===================
