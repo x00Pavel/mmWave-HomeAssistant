@@ -2,8 +2,9 @@ esphome:
   name: human-detector
   includes:
     - mmWaveRadar.h
+    - protocol_values.h
   # libraries:
-  #   - "Seeed Arduino 24GHz Radar Sensor@^1.0.1"
+  #   - "seeed-studio/Seeed Arduino rpcUnified@^2.1.4"
     
 esp8266:
   board: d1_mini
@@ -61,12 +62,6 @@ binary_sensor:
     pin: D2
     name: "Human active PIN"
 
-  - platform: custom
-    lambda: |-
-      auto uart_component = static_cast<HumanPresenceRadar *>(mmWave);
-      return {uart_component->target_present};
-    binary_sensors:
-      name: "Human presense"
 
 sensor:
   - platform: custom
@@ -109,6 +104,20 @@ button:
     on_press:
       lambda: 'static_cast<HumanPresenceRadar *>(mmWave)->reboot();'
   - platform: template
-    name: "Refresh radar info"
+    name: "Get radar device ID"
     on_press:
-      lambda: 'static_cast<HumanPresenceRadar *>(mmWave)->get_radar_info();'
+      lambda: 'static_cast<HumanPresenceRadar *>(mmWave)->get_radar_device_id();'
+  - platform: template
+    name: "Get radar software version"
+    on_press:
+      lambda: 'static_cast<HumanPresenceRadar *>(mmWave)->get_radar_sw_version();'
+# It seems that this functionality has some bug on the radar side.
+  # - platform: template
+  #   name: "Get radar hardware version"
+  #   on_press:
+  #     lambda: 'static_cast<HumanPresenceRadar *>(mmWave)->get_radar_hw_version();'
+  # - platform: template
+  #   name: "Get radar protocol version"
+  #   on_press:
+  #     lambda: 'static_cast<HumanPresenceRadar *>(mmWave)->get_radar_protocol_version();'
+  

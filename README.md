@@ -55,5 +55,10 @@ Guides provided on the Discord looks promissing, so hopefully they would realy h
 
 ## TODO
 
-1. Establish the communication towards the radar
+1. ~~Establish the communication towards the radar~~ Done
 2. Change the sensativity of the radar via Home Assitent
+
+
+## Notes
+
+- With fixing of sending commands to the radar, it appeared that geting protocol and hardware version causes fauiler of the whole microcontroller, so those function are disabled (commented in the code)
