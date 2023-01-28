@@ -62,6 +62,12 @@ binary_sensor:
     pin: D2
     name: "Human active PIN"
 
+  - platform: custom
+    lambda: |-
+      auto uart_component = static_cast<HumanPresenceRadar *>(mmWave);
+      return {uart_component->target_present};
+    binary_sensors:
+      name: "Human presense"
 
 sensor:
   - platform: custom

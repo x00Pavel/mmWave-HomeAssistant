@@ -16,6 +16,7 @@ class HumanPresenceRadar : public Component, public UARTDevice {
   public:
   HumanPresenceRadar(UARTComponent *parent) : UARTDevice(parent) {}
   Sensor *body_movement = new Sensor();
+  BinarySensor *target_present = new BinarySensor();
   TextSensor *heart_beat_sensor = new TextSensor();
   TextSensor *approching_away_sensor = new TextSensor();
   TextSensor *device_id = new TextSensor();
